@@ -47,6 +47,7 @@ jobs:
             --verbose
             --no-progress
             --exclude 'localhost'
+            --exclude 'mellea\.ai'
             --exclude '^#'
             content/blogs/**/*.md *.md
           fail: true
