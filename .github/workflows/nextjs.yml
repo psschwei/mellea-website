@@ -46,6 +46,7 @@ jobs:
           args: >
             --verbose
             --no-progress
+            --base-url 'https://mellea.ai'
             --exclude 'localhost'
             --exclude 'mellea\.ai'
             --exclude '^#'
