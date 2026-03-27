@@ -120,31 +120,33 @@ export default function GitHubStats() {
           }
         />
       </div>
-      {state.status === 'success' && state.data.contributorAvatars.length > 0 && (
-        <div className="gh-avatars">
-          {state.data.contributorAvatars.map((c) => (
-            <a
-              key={c.login}
-              href={c.profileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={c.login}
-              className="gh-avatar-link"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={c.avatarUrl} alt={c.login} className="gh-avatar" width={28} height={28} />
-            </a>
-          ))}
-        </div>
-      )}
-      <a
-        href={repoUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="gh-github-btn"
-      >
-        View on GitHub →
-      </a>
+      <div className="gh-stats-footer">
+        {state.status === 'success' && state.data.contributorAvatars.length > 0 && (
+          <div className="gh-avatars">
+            {state.data.contributorAvatars.map((c) => (
+              <a
+                key={c.login}
+                href={c.profileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={c.login}
+                className="gh-avatar-link"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={c.avatarUrl} alt={c.login} className="gh-avatar" width={28} height={28} />
+              </a>
+            ))}
+          </div>
+        )}
+        <a
+          href={repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="gh-github-btn"
+        >
+          View on GitHub →
+        </a>
+      </div>
       </div>
     </div>
   );

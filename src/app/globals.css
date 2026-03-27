@@ -1164,22 +1164,25 @@ a {
 
 .gh-stats-body {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 1rem;
 }
 
 .gh-stats-grid {
   display: flex;
   gap: 2rem;
-  flex-wrap: wrap;
+}
+
+.gh-stats-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .gh-avatars {
   display: flex;
   align-items: center;
   gap: 0;
-  margin-bottom: 1rem;
 }
 
 .gh-avatar-link {
