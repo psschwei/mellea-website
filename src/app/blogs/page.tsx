@@ -9,7 +9,7 @@ export default function BlogsPage() {
       <div className="page-header">
         <h1 className="page-title">Blog</h1>
         <p className="page-subtitle">
-          Deep-dives on agentic systems, patterns, and the ideas behind ProjectX.
+          Deep-dives on agentic systems, generative computing, and the ideas behind Mellea.
         </p>
       </div>
 

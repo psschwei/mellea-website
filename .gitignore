@@ -9,5 +9,11 @@ out/
 .DS_Store
 *.pem
 
+# Test output
+playwright-report/
+playwright-results/
+test-results/
+
 # Local
 TODO.md
+tsconfig.tsbuildinfo
