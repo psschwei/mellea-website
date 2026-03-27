@@ -5,7 +5,7 @@ export const siteConfig = {
   name: 'Mellea',
   url: 'https://mellea.ai',
   description:
-    'A composable, multi-agent framework for building reliable AI agents at production scale.',
+    'Open-source Python library for structured, validated LLM output. Type-annotated outputs, token-level constrained decoding, requirements-driven validation. Works with any LLM provider.',
   docsUrl: 'https://docs.mellea.ai',
   githubUrl: 'https://github.com/generative-computing/mellea',
   /* discordUrl: 'https://discord.com',

@@ -7,21 +7,23 @@ import { siteConfig } from '@/config/site';
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
   title: {
-    default: 'Mellea — The Agentic Framework',
+    default: 'Mellea — Reliable, Testable LLM Output for Python',
     template: '%s | Mellea',
   },
   description: siteConfig.description,
   openGraph: {
     type: 'website',
     siteName: siteConfig.name,
-    title: 'Mellea — The Agentic Framework',
+    title: 'Mellea — Reliable, Testable LLM Output for Python',
     description: siteConfig.description,
     url: siteConfig.url,
+    images: [{ url: '/images/og-hero.png', width: 2064, height: 1104 }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Mellea — The Agentic Framework',
+    title: 'Mellea — Reliable, Testable LLM Output for Python',
     description: siteConfig.description,
+    images: ['/images/og-hero.png'],
   },
 };
 
