@@ -18,12 +18,6 @@ export default function Header() {
 
         <nav className="header-nav">
           <Link
-            href="/"
-            className={`nav-link ${pathname === '/' ? 'active' : ''}`}
-          >
-            Home
-          </Link>
-          <Link
             href={siteConfig.docsUrl}
             target="_blank"
             rel="noopener noreferrer"
