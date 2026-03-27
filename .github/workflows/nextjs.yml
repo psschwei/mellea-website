@@ -58,8 +58,6 @@ jobs:
         run: npm ci
       - name: Build with Next.js
         run: npx --no-install next build
-        env:
-          NEXT_PUBLIC_BASE_PATH: /blog
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
