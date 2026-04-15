@@ -37,7 +37,7 @@ npm run build         # Static export to ./out/
 | `src/components/` | React components |
 | `src/lib/` | Server-side utilities (blog parsing, etc.) |
 | `src/config/` | Site-wide configuration (`site.ts`) |
-| `content/blogs/` | Markdown blog posts with YAML frontmatter |
+| `content/blogs/` | Markdown blog posts with YAML front matter |
 | `public/` | Static assets (images, CNAME) |
 | `tests/unit/` | Vitest unit tests |
 | `tests/e2e/` | Playwright E2E tests |
@@ -77,14 +77,6 @@ npm run test:e2e      # must pass
 
 If you rename or remove a CSS class, check `tests/e2e/` for selectors that reference it and update them in the same commit.
 
-### Content-only changes (`.md` files in `content/blogs/` only, no code touched)
-
-```bash
-npm run lint:md       # must be clean
-```
-
-No build or E2E run required for content-only changes.
-
 ### Additional checks (code changes)
 
 - No new `any` types without a comment explaining why
@@ -123,27 +115,25 @@ Pushing to `main` triggers `.github/workflows/nextjs.yml`. Pipeline: lint → (t
 
 Drop a `.md` file in `content/blogs/`. The filename becomes the URL slug: `my-post.md` → `/blogs/my-post`.
 
-Required frontmatter:
+Required front matter:
 
 ```md
 ---
 title: "Your Post Title"
-date: "2026-03-27"
+date: "YYYY-MM-DD"
 author: "Your Name"
 excerpt: "One sentence shown on the blog listing and cards."
-tags: ["tag1", "tag2"]        # optional
-coverImage: "/images/blog/my-post.png"  # optional, path relative to public/
+tags: ["tag1", "tag2", "etc"]
 ---
 ```
 
-| Field        | Required | Notes                           |
-| ------------ | -------- | ------------------------------- |
-| `title`      | Yes      | Post title                      |
-| `date`       | Yes      | `YYYY-MM-DD`, used for sorting  |
-| `author`     | Yes      | Display name                    |
-| `excerpt`    | Yes      | Shown on cards and listing page |
-| `tags`       | No       | Array of strings                |
-| `coverImage` | No       | Path relative to `public/`      |
+| Field     | Required | Notes                           |
+| --------- | -------- | ------------------------------- |
+| `title`   | Yes      | Post title                      |
+| `date`    | Yes      | `YYYY-MM-DD`, used for sorting  |
+| `author`  | Yes      | Display name                    |
+| `excerpt` | Yes      | Shown on cards and listing page |
+| `tags`    | No       | Array of strings                |
 
 Verify with `npm run build` — no config changes or code edits needed.
 
