@@ -96,7 +96,7 @@ dollar per run. Here's what one-shot prompting looks like across the size
 spectrum:
 
 | Model | Result |
-|---|---|
+| --- | --- |
 | Small open-weight (<3B) | Doesn't understand the task. Returns a generic "cost breakdown" with no prices. |
 | Open-weight reasoning (~20B) | Finds categories and subtotals. No pie chart. Numbers often wrong. |
 | Gemini Fast | Mostly reasonable. No chart. Some prices off. |
