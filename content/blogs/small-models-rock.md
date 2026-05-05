@@ -3,7 +3,7 @@ title: "Making Small Models Rock with Mellea"
 date: "2026-06-05"
 author: "Paul Schweigert, Nathan Fulton"
 excerpt: "Small open-weight models can match frontier-model output on real tasks, if the harness around them is doing its share of the work. Here's how Mellea makes that trade possible."
-tags: ["mellea", "granite", "rag", "intrinsics", "small-models", "docling"]
+tags: ["granite", "rag", "intrinsics", "small-models", "docling"]
 ---
 
 ![Making Small Models Rock with Mellea](/images/small-models-rock/main.png)
