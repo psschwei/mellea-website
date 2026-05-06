@@ -22,7 +22,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
       description: blog.excerpt,
       url: `${siteConfig.url}/blogs/${slug}`,
       siteName: siteConfig.name,
-      publishedTime: blog.date,
+      publishedTime: `${blog.date}T12:00:00Z`,
       authors: [blog.author],
       images: [{ url: siteConfig.ogImage }],
     },
@@ -39,7 +39,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 function formatDate(dateStr: string) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
