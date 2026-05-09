@@ -111,7 +111,7 @@ across the size spectrum:
 | Small open-weight (<3B) | Doesn't understand the task. Returns a generic "cost breakdown" with no prices. |
 | Open-weight reasoning (~20B) | Finds categories and subtotals. No pie chart. Numbers often wrong. |
 | Gemini Fast | Mostly reasonable. No chart. Some prices off. |
-| Frontier reasoning (GPT-5 / Claude Opus) | Gets most items right. Cites sources. No chart on first shot. ~$1/run. |
+| Frontier reasoning (GPT-5) | Gets most items right. Cites sources. No chart on first shot. ~$1/run. |
 
 A dollar per run sounds cheap until you write down what the firm actually
 wants to do with it. Fifteen hundred projects a year, twenty years of
@@ -133,7 +133,7 @@ repo](https://github.com/generative-computing/mellea-tutorials/tree/main/noteboo
 under `construction_docs/` and `product_catalogs/`.
 
 ```bash
-pip install 'mellea[docling,hf]'
+uv pip install 'mellea[docling,hf]'
 ```
 
 ```python
