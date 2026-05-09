@@ -22,12 +22,12 @@ given the same prompt won't.
 
 The fix is a better harness around the model you already have. By
 "harness" we mean the software scaffolding around the model call:
-decomposition, validation, retries, tool dispatch — the part that isn't
+decomposition, validation, retries, tool dispatch. The part that isn't
 the forward pass. That's what Mellea is for.
 
 > **What this post does**: walks through a construction cost-estimation
 > pipeline that one-shot prompting needs a frontier reasoning model for,
-> rebuilt on a 3B Granite model running locally — same accuracy, no API
+> rebuilt on a 3B Granite model running locally. Same accuracy, no API
 > keys, ~$0/run. If you're paying frontier-model prices for structured
 > extraction or matching, the same pattern applies.
 
@@ -50,9 +50,9 @@ Three things fall out of that approach:
 - **Cost is predictable.** Local inference on a small model has a fixed,
   knowable cost per run, so you can back-test millions of runs without a
   finance conversation.
-- **Data stays local.** Documents never leave the machine, which for
-  regulated domains like healthcare, finance, legal, and procurement is
-  the difference between "can use this" and "can't."
+- **Data stays local.** Documents never leave the machine. For regulated
+  domains like healthcare, finance, legal, and procurement, that's the
+  difference between "can use this" and "can't."
 - **The inference backend is yours to choose.** Mellea talks to Ollama,
   vLLM, Hugging Face, and any OpenAI-compatible endpoint, so swapping
   backends is a one-line change. You aren't married to one provider's
@@ -85,14 +85,13 @@ from 1978 applies directly. English is designed for communication between
 humans, not for specifying processes executed by machines. The fact that a
 modern model can *interpret* English well enough to try doesn't mean
 English is a good language to write your program in. Drawing boundaries,
-stating contracts, decomposing work: that's where the actual engineering
+stating contracts, decomposing work: that's where the engineering
 has always lived. The syntax of the target language was the trivial part.
 
 ## An Example Worth Walking Through
 
-The easiest way to show this working is to pick a task that's just past
-what single-shot prompting can do reliably, then build it up as a
-small-model pipeline.
+Pick a task that's just past what single-shot prompting can do reliably,
+then build it up as a small-model pipeline.
 
 A construction management firm wants to estimate material costs for a
 project. The inputs are a construction plan (PDF, with a bill of materials
@@ -121,7 +120,7 @@ materializes?* One backtest is a Monte Carlo simulation over tens of
 thousands of projects. At a dollar a run, that's the budget for a small
 team.
 
-So: same task, but on a 3B Granite model running on a laptop. About a
+Same task, on a 3B Granite model running on a laptop. About a
 hundred lines of code. No API keys, no egress, no per-token billing. Here's
 how.
 
@@ -257,7 +256,7 @@ shape stays in Python; each iteration issues work and collects it later.
 ## Step 2: Load the Product Catalogs
 
 Catalogs come in whatever format the supplier happened to send. `RichDocument`
-handles PDF, DOCX, and XLSX uniformly:
+handles PDF, DOCX, and XLSX the same way:
 
 ```python
 from mellea.stdlib.components.docs import Document
@@ -271,17 +270,16 @@ windows_doc = Document(text=rd_windows.to_markdown())
 ```
 
 Each becomes a plain `Document`, the input format Mellea's RAG adapters
-expect. Lumber is skipped here to keep the Colab T4 runtime reasonable —
-any item whose category isn't keyed into the catalog lookup below will
+expect. Lumber is skipped here to keep the Colab T4 runtime reasonable.
+Any item whose category isn't keyed into the catalog lookup below will
 land in the report as "unknown."
 
 ## Step 3: Match BOM Entries to Prices with RAG Intrinsics
 
-This is the step that earns the pipeline. Matching "36x80 Aurora half-moon
-entry door" from a bill of materials to the right line in a product catalog
-is fuzzy by nature. Rather than ask a general-purpose model to "find the
-right price and tell me if you're sure," Mellea exposes purpose-built
-adapters from the [IBM Granite RAG adapters
+Matching "36x80 Aurora half-moon entry door" from a bill of materials to
+the right line in a product catalog is fuzzy by nature. Rather than ask a
+general-purpose model to "find the right price and tell me if you're sure,"
+Mellea exposes purpose-built adapters from the [IBM Granite RAG adapters
 library](https://huggingface.co/ibm-granite) for exactly this kind of check:
 `check_context_relevance`, `check_answerability`, and `find_citations`.
 (In the Python import path they're still under `intrinsic`; the
@@ -336,10 +334,10 @@ high-confidence "answerable." Pass the lumber catalog with the same doors
 question, and context relevance comes back `"partially relevant"` (a
 pricing document about construction, but not the right one) while
 answerability correctly collapses to `"unanswerable"`. Frontier model
-logits don't give you this.
-Nothing in a general-purpose model's training signal makes the raw
-next-token probabilities mean "calibrated confidence that this document
-answers this question." Adapters are trained to make them mean that.
+logits don't give you this. Nothing in a general-purpose model's training
+signal makes the raw next-token probabilities mean "calibrated confidence
+that this document answers this question." Adapters are trained to make
+them mean that.
 
 ### Why adapters are cheap to compose
 
@@ -357,7 +355,7 @@ modularity without paying 3× the compute.
 
 ### The pricing loop
 
-The one line that matters is `if verdict == "answerable":` — everything
+The one line that matters is `if verdict == "answerable":`. Everything
 around it is ceremony to get that gate into place. The loop walks every
 BOM item, picks the right catalog by category, and asks the answerability
 adapter whether a price is extractable before it ever asks the model to
@@ -432,7 +430,7 @@ answer don't get a hallucinated price, they get `total_price=None` and
 flow through to the report as "unknown." Failure modes are explicit. And
 the model is only ever asked to extract a number from a document where a
 calibrated adapter has already confirmed the number is there. The hard
-problem — *is this the right document at all?* — was solved by a
+problem (*is this the right document at all?*) was solved by a
 specialized adapter rather than by a general prompt.
 
 For extra belt-and-suspenders, `find_citations` will highlight the exact
@@ -506,8 +504,7 @@ than dragging in retrieval.
 
 ## Small Models, Frontier-Level Output
 
-Step back from the construction example. What just happened is the general
-shape of the trade.
+Step back from the construction example. The general shape of the trade:
 
 <img src="/images/small-models-rock/harnessed.png" alt="A small model, harnessed" style="max-width: 60%;" />
 
@@ -528,9 +525,9 @@ the accuracy of a baseline several tiers up. Those points of task
 completion are the ones you usually can't buy without going up a model
 tier. The harness buys them instead.
 
-The practical upshot: "small model or frontier model" is less a question
-about raw capability and more a question about whether the harness around
-it is doing its share. If you're paying frontier-model prices for a task
+The practical upshot: "small model or frontier model" is mostly a question
+about whether the harness around the model is doing its share, not about
+raw capability. If you're paying frontier-model prices for a task
 that decomposes cleanly, there's a good chance you're paying for
 engineering you haven't done yet.
 
