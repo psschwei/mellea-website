@@ -3,16 +3,16 @@ title: "Making Small Models Rock with Mellea"
 date: "2026-06-05"
 author: "Paul Schweigert, Nathan Fulton"
 excerpt: "Small open-weight models can match frontier-model output on real tasks, if the harness around them is doing its share of the work. Here's how Mellea makes that trade possible."
-tags: ["granite", "rag", "intrinsics", "small-models", "docling"]
+tags: ["granite", "rag", "adapters", "small-models", "docling", "local-llm"]
 ---
 
-![Making Small Models Rock with Mellea](/images/small-models-rock/main.png)
+<img src="/images/small-models-rock/main.png" alt="Making Small Models Rock with Mellea" style="background-color: white;" />
 
 Small open-weight models keep getting better. A 3B Granite model on your
 laptop today does things a 70B model couldn't do a year ago. There is still
 a gap between "small model can technically do this" and "small model can
 reliably do this on real data in production," and most teams cross that gap
-by giving up and paying for GPT-5.4 Pro instead.
+by giving up and paying for a frontier reasoning model instead.
 
 They shouldn't have to. The reason a small model fails on most production
 tasks isn't raw capability; it's that the small model can't hold a
@@ -20,8 +20,16 @@ six-subtask problem in one shot. A frontier model given a thousand-token
 system prompt with six subtasks inlined will muddle through. A 3B model
 given the same prompt won't.
 
-The fix is a better harness around the model you already have. That's what
-Mellea is for.
+The fix is a better harness around the model you already have. By
+"harness" we mean the software scaffolding around the model call:
+decomposition, validation, retries, tool dispatch — the part that isn't
+the forward pass. That's what Mellea is for.
+
+> **What this post does**: walks through a construction cost-estimation
+> pipeline that one-shot prompting needs a frontier reasoning model for,
+> rebuilt on a 3B Granite model running locally — same accuracy, no API
+> keys, ~$0/run. If you're paying frontier-model prices for structured
+> extraction or matching, the same pattern applies.
 
 ## The Bet
 
@@ -37,15 +45,18 @@ demand a frontier model, breaks them into pieces a small model can do well,
 and holds those pieces together with ordinary code rather than an
 ever-growing English prompt.
 
-Three things fall out of that approach. The first is predictable cost:
-local inference on a small model has a fixed, knowable cost per run, so you
-can back-test millions of runs without a finance conversation. The second
-is data sovereignty. Your documents never leave the machine, which for
-regulated domains like healthcare, finance, legal, and procurement is the
-difference between "can use this" and "can't." The third is vendor-agnostic
-inference. Mellea talks to Ollama, vLLM, Hugging Face, and any
-OpenAI-compatible endpoint, so swapping backends is a one-line change. You
-aren't married to one provider's pricing or uptime.
+Three things fall out of that approach:
+
+- **Cost is predictable.** Local inference on a small model has a fixed,
+  knowable cost per run, so you can back-test millions of runs without a
+  finance conversation.
+- **Data stays local.** Documents never leave the machine, which for
+  regulated domains like healthcare, finance, legal, and procurement is
+  the difference between "can use this" and "can't."
+- **The inference backend is yours to choose.** Mellea talks to Ollama,
+  vLLM, Hugging Face, and any OpenAI-compatible endpoint, so swapping
+  backends is a one-line change. You aren't married to one provider's
+  pricing or uptime.
 
 ## The Three Patterns
 
@@ -61,7 +72,7 @@ handle through three moves:
    retry logic in Python, not in the prompt. Models don't need to be
    instructed to iterate; code iterates.
 3. **Modularize model capabilities.** Reuse validated components like
-   structured output, typed generative functions, and RAG intrinsics
+   structured output, typed generative functions, and RAG adapters
    instead of rebuilding them every time.
 
 None of these is new. They are the ordinary software-engineering moves
@@ -89,18 +100,18 @@ spread across several tables) and a handful of supplier catalogs (PDF,
 DOCX, XLSX). The output is a priced HTML report with a pie chart breaking
 spend down by category.
 
-Ask a frontier model to do this in one shot and you can make it work.
-GPT-5.4 Pro with extended thinking gets most of the line items right,
-cites the catalog it pulled the price from, and does it all for about a
-dollar per run. Here's what one-shot prompting looks like across the size
-spectrum:
+Ask a frontier model to do this in one shot and you can make it work. A
+top-tier reasoning model with extended thinking gets most of the line
+items right, cites the catalog it pulled the price from, and does it all
+for about a dollar per run. Here's what one-shot prompting looks like
+across the size spectrum:
 
 | Model | Result |
 | --- | --- |
 | Small open-weight (<3B) | Doesn't understand the task. Returns a generic "cost breakdown" with no prices. |
 | Open-weight reasoning (~20B) | Finds categories and subtotals. No pie chart. Numbers often wrong. |
 | Gemini Fast | Mostly reasonable. No chart. Some prices off. |
-| GPT-5.4 Pro, extended thinking | Gets most items right. Cites sources. No chart on first shot. ~$1/run. |
+| Frontier reasoning (GPT-5 / Claude Opus) | Gets most items right. Cites sources. No chart on first shot. ~$1/run. |
 
 A dollar per run sounds cheap until you write down what the firm actually
 wants to do with it. Fifteen hundred projects a year, twenty years of
@@ -113,6 +124,24 @@ team.
 So: same task, but on a 3B Granite model running on a laptop. About a
 hundred lines of code. No API keys, no egress, no per-token billing. Here's
 how.
+
+## Setup
+
+Install Mellea with the extras this tutorial uses, then start a session
+backed by a local Granite model. Sample input files are in the [tutorial
+repo](https://github.com/generative-computing/mellea-tutorials/tree/main/notebooks/atai_2026)
+under `construction_docs/` and `product_catalogs/`.
+
+```bash
+pip install 'mellea[docling,hf]'
+```
+
+```python
+import mellea
+from mellea.backends.model_ids import IBM_GRANITE_4_MICRO_3B
+
+m = mellea.start_session(backend_name="ollama", model_id=IBM_GRANITE_4_MICRO_3B)
+```
 
 ## Step 1: Parse the Construction Plan into a Bill of Materials
 
@@ -165,13 +194,13 @@ class BOMEntry(pydantic.BaseModel):
 class BOM(pydantic.BaseModel):
     items: list[BOMEntry]
 
-def _bom_entry_is_well_formed(entry: BOMEntry) -> bool:
+def _bom_is_valid(output: str) -> bool:
     """Quantity is either an integer or the string 'allowance'."""
-    try:
-        int(entry.quantity)
-        return True
-    except ValueError:
-        return entry.quantity.lower() == "allowance"
+    bom = BOM.model_validate_json(output)
+    return all(
+        e.quantity.lower() == "allowance" or str(e.quantity).isdigit()
+        for e in bom.items
+    )
 ```
 
 "Allowance" is a construction term of art: *buy some of these, here's twenty
@@ -180,12 +209,12 @@ requirement with an explicit validator:
 
 ```python
 m.instruct(
-    "Reformat this table to have four columns: item, quantity, type, and notes.",
+    "Reformat this table to have four columns: item, quantity, category, and notes.",
     grounding_context={"table": table.to_markdown()},
     requirements=[
         req(
             "Quantity should only contain an integer or Allowance",
-            validation_fn=simple_validate(_bom_entries_are_well_formed),
+            validation_fn=simple_validate(_bom_is_valid),
         ),
     ],
     format=BOM,
@@ -204,6 +233,7 @@ independent of the others. `ainstruct` returns a thunk (a deferred
 computation) so the extraction can fan out:
 
 ```python
+import asyncio
 from mellea.core import ModelOutputThunk
 
 async def extract_bom(doc: RichDocument):
@@ -212,7 +242,7 @@ async def extract_bom(doc: RichDocument):
         if is_material_list(m, table_markdown=table.to_markdown()) == "yes":
             bom_routines.append(m.ainstruct(..., format=BOM))
 
-    bom_thunks: list[ModelOutputThunk] = [await r for r in bom_routines]
+    bom_thunks: list[ModelOutputThunk] = await asyncio.gather(*bom_routines)
     boms = [BOM.model_validate_json(await t.avalue()) for t in bom_thunks]
 
     all_items = []
@@ -238,13 +268,12 @@ doors_doc = Document(text=rd_doors.to_markdown())
 
 rd_windows = RichDocument.from_document_file("product_catalogs/north_ridge_windows.docx")
 windows_doc = Document(text=rd_windows.to_markdown())
-
-rd_lumber = RichDocument.from_document_file("product_catalogs/cone_mountain_lumber_catalog.xlsx")
-lumber_doc = Document(text=rd_lumber.to_markdown())
 ```
 
-Each becomes a plain `Document`, the input format Mellea's RAG intrinsics
-expect.
+Each becomes a plain `Document`, the input format Mellea's RAG adapters
+expect. Lumber is skipped here to keep the Colab T4 runtime reasonable —
+any item whose category isn't keyed into the catalog lookup below will
+land in the report as "unknown."
 
 ## Step 3: Match BOM Entries to Prices with RAG Intrinsics
 
@@ -252,11 +281,13 @@ This is the step that earns the pipeline. Matching "36x80 Aurora half-moon
 entry door" from a bill of materials to the right line in a product catalog
 is fuzzy by nature. Rather than ask a general-purpose model to "find the
 right price and tell me if you're sure," Mellea exposes purpose-built
-adapters from the [IBM Granite RAG intrinsics
+adapters from the [IBM Granite RAG adapters
 library](https://huggingface.co/ibm-granite) for exactly this kind of check:
 `check_context_relevance`, `check_answerability`, and `find_citations`.
+(In the Python import path they're still under `intrinsic`; the
+externally-facing term is *adapter*.)
 
-The intrinsics run on the HuggingFace backend, so start a second session:
+The adapters run on the HuggingFace backend, so start a second session:
 
 ```python
 from mellea.backends.huggingface import LocalHFBackend
@@ -298,25 +329,26 @@ verdict = check_answerability(
 # verdict is the categorical label 'answerable' or 'unanswerable'
 ```
 
-What makes these intrinsics worth reaching for, as opposed to asking a
+What makes these adapters worth reaching for, as opposed to asking a
 general model "is this document relevant, 1-10," is that the outputs are
 **calibrated**. Pass the doors catalog and a doors question, you get a
 high-confidence "answerable." Pass the lumber catalog with the same doors
-question, and context relevance drops to around 0.5 (a pricing document
-about construction, but not the right one) while answerability correctly
-collapses to "unanswerable." Frontier model logits don't give you this.
+question, and context relevance comes back `"partially relevant"` (a
+pricing document about construction, but not the right one) while
+answerability correctly collapses to `"unanswerable"`. Frontier model
+logits don't give you this.
 Nothing in a general-purpose model's training signal makes the raw
 next-token probabilities mean "calibrated confidence that this document
-answers this question." Intrinsics are trained to make them mean that.
+answers this question." Adapters are trained to make them mean that.
 
-### Why intrinsics are cheap to compose
+### Why adapters are cheap to compose
 
 A realistic pipeline wants to run multiple checks on the same
 (question, document) pair: is it relevant, is it answerable, where are the
 citations? Naively, three adapters means three full model runs, each
 re-prefilling the same long document prompt.
 
-Granite intrinsics ship as **ALoRA** adapters, not plain LoRAs. The
+Granite adapters ship as **ALoRA** adapters, not plain LoRAs. The
 difference is narrow but matters here: an ALoRA reuses the base model's
 prefill. The expensive pass over the document happens once against the
 base weights, and each adapter only kicks in during token generation. Three
@@ -325,9 +357,11 @@ modularity without paying 3× the compute.
 
 ### The pricing loop
 
-The pricing logic walks every BOM item, picks the right catalog by category,
-and asks the answerability intrinsic whether a price is extractable before it
-ever asks the model to produce one:
+The one line that matters is `if verdict == "answerable":` — everything
+around it is ceremony to get that gate into place. The loop walks every
+BOM item, picks the right catalog by category, and asks the answerability
+adapter whether a price is extractable before it ever asks the model to
+produce one:
 
 ```python
 class BomEntryWithPrice(pydantic.BaseModel):
@@ -347,10 +381,13 @@ class TotalPriceResponseFmt(pydantic.BaseModel):
 def get_prices(m: mellea.MelleaSession, bom: BOM) -> list[BomEntryWithPrice]:
     prices: list[BomEntryWithPrice] = []
     for entry in bom.items:
+        # .get() returns None for categories we didn't key in (e.g. lumber),
+        # which falls through to the "unknown price" branch below.
         catalog = {"windows": windows_doc, "doors": doors_doc}.get(entry.category)
-        # Lumber is skipped in the tutorial to keep Colab T4 runtime reasonable.
 
         if catalog:
+            # The gate: don't ask for a price unless the adapter is confident
+            # one can be extracted from this document.
             verdict = check_answerability(
                 f"What is the price of {entry.item}?",
                 documents=[catalog],
@@ -379,9 +416,10 @@ def get_prices(m: mellea.MelleaSession, bom: BOM) -> list[BomEntryWithPrice]:
                     item=entry.item, quantity=entry.quantity, notes=entry.notes,
                     category=entry.category, unit_price=unit_price, total_price=total_price,
                 ))
-                continue
+                continue  # happy path done — skip the fallback append
 
-        # Item not covered by a catalog — record it with unknown price.
+        # Either no catalog for this category or the adapter said "unanswerable":
+        # record the item with unit_price=None so the report surfaces it as unknown.
         prices.append(BomEntryWithPrice(
             item=entry.item, quantity=entry.quantity, notes=entry.notes,
             category=entry.category, unit_price=None, total_price=None,
@@ -389,14 +427,13 @@ def get_prices(m: mellea.MelleaSession, bom: BOM) -> list[BomEntryWithPrice]:
     return prices
 ```
 
-Two things matter about this loop. First, `verdict == "answerable"` is a
-gate: items the intrinsic can't confidently answer don't get a hallucinated
-price, they get `total_price=None` and flow through to the report as
-"unknown." Failure modes are explicit. Second, the model is only ever asked
-to extract a number from a document where a calibrated adapter has already
-confirmed the number is there. The hard problem, *is this the right
-document at all?*, was solved by a specialized adapter rather than by a
-general prompt.
+`verdict == "answerable"` is a gate: items the adapter can't confidently
+answer don't get a hallucinated price, they get `total_price=None` and
+flow through to the report as "unknown." Failure modes are explicit. And
+the model is only ever asked to extract a number from a document where a
+calibrated adapter has already confirmed the number is there. The hard
+problem — *is this the right document at all?* — was solved by a
+specialized adapter rather than by a general prompt.
 
 For extra belt-and-suspenders, `find_citations` will highlight the exact
 span of the source document that produced each answer, so spot-checks
@@ -406,9 +443,9 @@ become a substring lookup rather than a re-read:
 from mellea.stdlib.components.intrinsic.rag import find_citations
 
 citations = find_citations(
-    response=price_response.value,
+    response=total.value,
     documents=[doors_doc],
-    context=ctx,
+    context=ChatContext(),
     backend=m_hf.backend,
 )
 ```
@@ -453,7 +490,8 @@ report = m.instruct(
     "line-item material list with prices. At the top include the /tmp/chart.png image.",
     grounding_context=report_grounding_context,
 )
-open("/tmp/report.html", "w").write(report.value)
+with open("/tmp/report.html", "w") as f:
+    f.write(report.value)
 ```
 
 Swapping sessions mid-pipeline is one line. Each step runs against the
@@ -471,7 +509,7 @@ than dragging in retrieval.
 Step back from the construction example. What just happened is the general
 shape of the trade.
 
-![A small model, harnessed](/images/small-models-rock/harnessed.png)
+<img src="/images/small-models-rock/harnessed.png" alt="A small model, harnessed" style="max-width: 60%;" />
 
 A task that one-shot required a frontier model and a dollar per run now
 runs on a 3B open-weight model on a laptop. Pricing extraction on Granite 4
@@ -482,12 +520,13 @@ hallucinated numbers, so the report is auditable instead of something a
 human has to re-check line by line.
 
 The construction case isn't a one-off. The same three-pattern approach
-generalizes. On agent benchmarks the Mellea team has run (a DB2 database
-agent and a compliance agent), rewriting large prompt-based systems as
-Mellea programs moves a Llama 70B setup from ~80% task completion to ~90%,
-and lets a Granite 8B model match or beat a Llama 70B baseline. Those last
-ten points of task completion are the ones you usually can't buy without
-going up a model tier. The harness buys them instead.
+generalizes. In internal evaluations on agent benchmarks the Mellea team
+has run (a DB2 database agent and a compliance agent), rewriting large
+prompt-based systems as Mellea programs produces meaningful task-completion
+gains on large models and lets much smaller open-weight models approach
+the accuracy of a baseline several tiers up. Those points of task
+completion are the ones you usually can't buy without going up a model
+tier. The harness buys them instead.
 
 The practical upshot: "small model or frontier model" is less a question
 about raw capability and more a question about whether the harness around
@@ -518,5 +557,5 @@ pieces used above are all part of Mellea's standard library. The full
 construction tutorial notebook is in the Mellea tutorials repo.
 
 - [Mellea on GitHub](https://github.com/generative-computing/mellea)
-- [Granite RAG intrinsics on Hugging Face](https://huggingface.co/ibm-granite)
+- [Granite RAG adapters on Hugging Face](https://huggingface.co/ibm-granite)
 - [Construction tutorial notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
