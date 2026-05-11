@@ -81,12 +81,16 @@ part of your program that happens to be written in English.
 
 The argument in [*On the Foolishness of "Natural Language
 Programming"*](https://www.cs.utexas.edu/~EWD/transcriptions/EWD06xx/EWD667.html)
-from 1978 applies directly. English is designed for communication between
-humans, not for specifying processes executed by machines. The fact that a
-modern model can *interpret* English well enough to try doesn't mean
-English is a good language to write your program in. Drawing boundaries,
-stating contracts, decomposing work: that's where the engineering
-has always lived. The syntax of the target language was the trivial part.
+from 1978 applies directly:
+
+> English is designed for communication between humans, not for
+> specifying processes executed by machines. The fact that a modern
+> model can *interpret* English well enough to try doesn't mean English
+> is a good language to write your program in.
+
+Drawing boundaries, stating contracts, decomposing work: that's where
+the engineering has always lived. The syntax of the target language
+was the trivial part.
 
 ## An Example Worth Walking Through
 
@@ -228,8 +232,8 @@ only has to do the reformatting.
 ### Parallelize across tables
 
 Construction documents often carry many tables, and each table is
-independent of the others. `ainstruct` returns a thunk (a deferred
-computation) so the extraction can fan out:
+independent of the others. `ainstruct` returns a coroutine that resolves
+to a thunk (a deferred computation), so the extraction can fan out:
 
 ```python
 import asyncio
@@ -239,7 +243,17 @@ async def extract_bom(doc: RichDocument):
     bom_routines = []
     for table in doc.get_tables():
         if is_material_list(m, table_markdown=table.to_markdown()) == "yes":
-            bom_routines.append(m.ainstruct(..., format=BOM))
+            bom_routines.append(m.ainstruct(
+                "Reformat this table to have four columns: item, quantity, category, and notes.",
+                grounding_context={"table": table.to_markdown()},
+                requirements=[
+                    req(
+                        "Quantity should only contain an integer or Allowance",
+                        validation_fn=simple_validate(_bom_is_valid),
+                    ),
+                ],
+                format=BOM,
+            ))
 
     bom_thunks: list[ModelOutputThunk] = await asyncio.gather(*bom_routines)
     boms = [BOM.model_validate_json(await t.avalue()) for t in bom_thunks]
@@ -270,11 +284,11 @@ windows_doc = Document(text=rd_windows.to_markdown())
 ```
 
 Each becomes a plain `Document`, the input format Mellea's RAG adapters
-expect. Lumber is skipped here to keep the Colab T4 runtime reasonable.
+expect. Lumber is skipped here to keep the walkthrough short.
 Any item whose category isn't keyed into the catalog lookup below will
 land in the report as "unknown."
 
-## Step 3: Match BOM Entries to Prices with RAG Intrinsics
+## Step 3: Match BOM Entries to Prices with RAG Adapters
 
 Matching "36x80 Aurora half-moon entry door" from a bill of materials to
 the right line in a product catalog is fuzzy by nature. Rather than ask a
@@ -285,7 +299,10 @@ library](https://huggingface.co/ibm-granite) for exactly this kind of check:
 (In the Python import path they're still under `intrinsic`; the
 externally-facing term is *adapter*.)
 
-The adapters run on the HuggingFace backend, so start a second session:
+The adapters run on the HuggingFace backend, so start a second session.
+The `start_session` convenience constructor covers the common Ollama path;
+for HuggingFace plus a local backend object, drop one level and construct
+`MelleaSession` directly:
 
 ```python
 from mellea.backends.huggingface import LocalHFBackend
@@ -307,7 +324,7 @@ from mellea.stdlib.components.intrinsic.rag import (
 from mellea.stdlib.context import ChatContext
 
 score = check_context_relevance(
-    question="What is the price of the 36x80 Aurora half-moon entry door?",
+    "What is the price of the 36x80 Aurora half-moon entry door?",
     document=doors_doc,
     context=ChatContext(),
     backend=m_hf.backend,
@@ -346,9 +363,9 @@ A realistic pipeline wants to run multiple checks on the same
 citations? Naively, three adapters means three full model runs, each
 re-prefilling the same long document prompt.
 
-Granite adapters ship as **ALoRA** adapters, not plain LoRAs. The
-difference is narrow but matters here: an ALoRA reuses the base model's
-prefill. The expensive pass over the document happens once against the
+Granite adapters ship as **[ALoRA](https://arxiv.org/abs/2504.12397)**
+adapters, not plain LoRAs. The difference is narrow but matters here: an
+ALoRA reuses the base model's prefill. The expensive pass over the document happens once against the
 base weights, and each adapter only kicks in during token generation. Three
 sequential checks on the same document share one prefill. You get
 modularity without paying 3× the compute.
@@ -376,7 +393,7 @@ class UnitPriceResponseFmt(pydantic.BaseModel):
 class TotalPriceResponseFmt(pydantic.BaseModel):
     total_price: float
 
-def get_prices(m: mellea.MelleaSession, bom: BOM) -> list[BomEntryWithPrice]:
+def get_prices(bom: BOM) -> list[BomEntryWithPrice]:
     prices: list[BomEntryWithPrice] = []
     for entry in bom.items:
         # .get() returns None for categories we didn't key in (e.g. lumber),
@@ -455,7 +472,9 @@ around it.
 
 Pricing runs on a 3B Granite model, but chart-drawing code is a different
 beast. Tool-calling and matplotlib benefit from a model with more muscle,
-so for this step switch sessions to GPT-OSS 20B running locally on Ollama:
+so for this step switch sessions to GPT-OSS 20B running locally on Ollama.
+The same `m` name now points at the larger model for the remainder of the
+pipeline:
 
 ```python
 import json
@@ -537,9 +556,19 @@ Latency per run is higher than a single API call. Async execution hides
 most of the fan-out, but a pipeline will always be slower per-run than one
 prompt. The win is in cost, privacy, and auditability, not in tail latency.
 
-Decomposition takes engineering effort. It's ordinary software work, and
-the upfront cost is real. It pays back once the task is recurring, privacy
-matters, or cost compounds at scale.
+Rate limits disappear. A frontier API can rate-limit you mid-backtest;
+local inference can't. When a pipeline fails at 3am, debugging a
+decomposed Mellea program means finding *which step* went wrong — a single
+frontier-model call is a black box. And the obvious alternative to
+"better harness + small model" is "fine-tune a small model." Harnessing
+is cheaper to iterate on and composes with fine-tuning later if you need
+it.
+
+Decomposition takes engineering effort. It's ordinary software work — a
+senior engineer can typically port a prompt pipeline in a day or two, and
+the GPU or laptop amortizes fast compared to even a week of frontier-API
+backtests. It pays back once the task is recurring, privacy matters, or
+cost compounds at scale.
 
 Not everything decomposes. Tasks that are genuinely holistic, like
 free-form creative writing or long-form reasoning chains that can't be cut
