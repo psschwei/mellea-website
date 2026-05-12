@@ -131,9 +131,10 @@ how.
 ## Setup
 
 Install Mellea with the extras this tutorial uses, then start a session
-backed by a local Granite model. Sample input files are in the [tutorial
-repo](https://github.com/generative-computing/mellea-tutorials/tree/main/notebooks/atai_2026)
-under `construction_docs/` and `product_catalogs/`.
+backed by a local Granite model. The full runnable walkthrough — including
+a `wget` for the sample construction plans and supplier catalogs used
+below — lives in the [tutorial
+notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb).
 
 ```bash
 uv pip install 'mellea[docling,hf]'
@@ -452,7 +453,9 @@ specialized adapter rather than by a general prompt.
 
 For extra belt-and-suspenders, `find_citations` will highlight the exact
 span of the source document that produced each answer, so spot-checks
-become a substring lookup rather than a re-read:
+become a substring lookup rather than a re-read. Drop this inside the
+`get_prices` loop right after each `total = m.instruct(...)` — `total`
+is the `ModelOutputThunk` bound on L420, so it only exists in that scope:
 
 ```python
 from mellea.stdlib.components.intrinsic.rag import find_citations
