@@ -130,14 +130,15 @@ how.
 
 ## Setup
 
-Install Mellea with the extras this tutorial uses, then start a session
-backed by a local Granite model. The full runnable walkthrough — including
-a `wget` for the sample construction plans and supplier catalogs used
-below — lives in the [tutorial
+Install Mellea with the extras this tutorial uses, grab the sample
+construction plans and supplier catalogs, then start a session backed by a
+local Granite model. The full runnable walkthrough lives in the [tutorial
 notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb).
 
 ```bash
 uv pip install 'mellea[docling,hf]'
+wget https://nfulton.org/atai26.tar.gz
+tar xvfz atai26.tar.gz
 ```
 
 ```python
