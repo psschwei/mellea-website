@@ -2,7 +2,7 @@
 title: "Making Small Models Rock with Mellea"
 date: "2026-06-05"
 author: "Paul Schweigert, Nathan Fulton"
-excerpt: "Small open-weight models can match frontier-model output on real tasks, if the harness around them is doing its share of the work. Here's how Mellea makes that trade possible."
+excerpt: "Small open-weight models can handle production-shaped work when the harness decomposes the task, validates outputs, and routes each step to the right local model."
 tags: ["granite", "rag", "adapters", "small-models", "docling", "local-llm"]
 ---
 
@@ -27,9 +27,11 @@ the forward pass. That's what Mellea is for.
 
 > **What this post does**: walks through a construction cost-estimation
 > pipeline that one-shot prompting needs a frontier reasoning model for,
-> rebuilt on a 3B Granite model running locally. Same accuracy, no API
-> keys, ~$0/run. If you're paying frontier-model prices for structured
-> extraction or matching, the same pattern applies.
+> rebuilt as a local Mellea pipeline. Granite 4 Micro 3B handles parsing,
+> validation, and pricing; GPT-OSS 20B handles chart and report generation.
+> No API keys, no egress, no per-token billing. If you're paying
+> frontier-model prices for structured extraction or matching, the same
+> pattern applies.
 
 ## The Bet
 
@@ -124,22 +126,14 @@ materializes?* One backtest is a Monte Carlo simulation over tens of
 thousands of projects. At a dollar a run, that's the budget for a small
 team.
 
-Same task, on a 3B Granite model running on a laptop. About a
-hundred lines of code. No API keys, no egress, no per-token billing. Here's
-how.
+Same task, as a local Mellea pipeline. Local models handle parsing,
+validation, pricing, and chart/report generation instead of routing the
+whole job through a frontier API. About a hundred lines of code. No API
+keys, no egress, no per-token billing. Here's how.
 
-## Setup
-
-Install Mellea with the extras this tutorial uses, grab the sample
-construction plans and supplier catalogs, then start a session backed by a
-local Granite model. The full runnable walkthrough lives in the [tutorial
-notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb).
-
-```bash
-uv pip install 'mellea[docling,hf]'
-wget https://nfulton.org/atai26.tar.gz
-tar xvfz atai26.tar.gz
-```
+> **Note:** The snippets below are the load-bearing pieces of the pipeline, trimmed
+> for reading. The [full runnable notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
+> has the install commands, sample data, and the glue between steps.
 
 ```python
 import mellea
@@ -161,9 +155,7 @@ HTML or PDF binary:
 ```python
 from mellea.stdlib.components.docs.richdocument import RichDocument
 
-construction_plans = RichDocument.from_document_file(
-    "construction_docs/construction_plans.pdf"
-)
+plans = RichDocument.from_document_file("construction_docs/construction_plans.pdf")
 ```
 
 To filter down to material-list tables, Mellea lets you declare a typed
@@ -171,7 +163,6 @@ generative function: a Python signature with no body, plus a docstring.
 
 ```python
 from typing import Literal
-import mellea
 
 @mellea.generative
 def is_material_list(table_markdown: str) -> Literal["yes", "no"]:
@@ -188,7 +179,6 @@ For tables that pass the filter, reformat them into a validated `BOM`:
 
 ```python
 import pydantic
-from mellea.stdlib.requirements import req, simple_validate
 
 class BOMEntry(pydantic.BaseModel):
     item: str
@@ -198,28 +188,28 @@ class BOMEntry(pydantic.BaseModel):
 
 class BOM(pydantic.BaseModel):
     items: list[BOMEntry]
-
-def _bom_is_valid(output: str) -> bool:
-    """Quantity is either an integer or the string 'allowance'."""
-    bom = BOM.model_validate_json(output)
-    return all(
-        e.quantity.lower() == "allowance" or str(e.quantity).isdigit()
-        for e in bom.items
-    )
 ```
 
-"Allowance" is a construction term of art: *buy some of these, here's twenty
-bucks.* The Pydantic schema alone can't express that rule, so it goes into a
-requirement with an explicit validator:
+The schema pins the shape. But "quantity" has a construction-specific quirk:
+alongside integers, entries can read *allowance* — meaning *buy some of these,
+here's twenty bucks.* The Pydantic schema alone can't express that rule, so
+it goes into a requirement with an explicit validator:
 
 ```python
+from mellea.stdlib.requirements import req, simple_validate
+
+def _quantity_ok(q) -> bool:
+    return str(q).isdigit() or str(q).lower() == "allowance"
+
 m.instruct(
     "Reformat this table to have four columns: item, quantity, category, and notes.",
     grounding_context={"table": table.to_markdown()},
     requirements=[
         req(
-            "Quantity should only contain an integer or Allowance",
-            validation_fn=simple_validate(_bom_is_valid),
+            "Quantity must be an integer or 'allowance'",
+            validation_fn=simple_validate(
+                lambda out: all(_quantity_ok(e.quantity) for e in BOM.model_validate_json(out).items)
+            ),
         ),
     ],
     format=BOM,
@@ -234,40 +224,10 @@ only has to do the reformatting.
 ### Parallelize across tables
 
 Construction documents often carry many tables, and each table is
-independent of the others. `ainstruct` returns a coroutine that resolves
-to a thunk (a deferred computation), so the extraction can fan out:
-
-```python
-import asyncio
-from mellea.core import ModelOutputThunk
-
-async def extract_bom(doc: RichDocument):
-    bom_routines = []
-    for table in doc.get_tables():
-        if is_material_list(m, table_markdown=table.to_markdown()) == "yes":
-            bom_routines.append(m.ainstruct(
-                "Reformat this table to have four columns: item, quantity, category, and notes.",
-                grounding_context={"table": table.to_markdown()},
-                requirements=[
-                    req(
-                        "Quantity should only contain an integer or Allowance",
-                        validation_fn=simple_validate(_bom_is_valid),
-                    ),
-                ],
-                format=BOM,
-            ))
-
-    bom_thunks: list[ModelOutputThunk] = await asyncio.gather(*bom_routines)
-    boms = [BOM.model_validate_json(await t.avalue()) for t in bom_thunks]
-
-    all_items = []
-    for bom in boms:
-        all_items.extend(bom.items)
-    return BOM(items=all_items)
-```
-
-Wall-clock scales with the slowest table, not the sum. The `for`-loop
-shape stays in Python; each iteration issues work and collects it later.
+independent of the others. In the full notebook, this step fans out with
+`ainstruct`: one coroutine per material-list table, then a gather that
+merges the resulting `BOM` objects. Wall-clock scales with the slowest
+table, not the sum. The loop shape stays in Python.
 
 ## Step 2: Load the Product Catalogs
 
@@ -276,18 +236,16 @@ handles PDF, DOCX, and XLSX the same way:
 
 ```python
 from mellea.stdlib.components.docs import Document
-from mellea.stdlib.components.docs.richdocument import RichDocument
 
-rd_doors = RichDocument.from_document_file("product_catalogs/door_product_catalog.pdf")
-doors_doc = Document(text=rd_doors.to_markdown())
+def load(path: str) -> Document:
+    return Document(text=RichDocument.from_document_file(path).to_markdown())
 
-rd_windows = RichDocument.from_document_file("product_catalogs/north_ridge_windows.docx")
-windows_doc = Document(text=rd_windows.to_markdown())
+doors_doc = load("construction_docs/product_catalogs/door_product_catalog.pdf")
+windows_doc = load("construction_docs/product_catalogs/north_ridge_windows.docx")
 ```
 
 Each becomes a plain `Document`, the input format Mellea's RAG adapters
-expect. Lumber is skipped here to keep the walkthrough short.
-Any item whose category isn't keyed into the catalog lookup below will
+expect. Any item whose category isn't keyed into the catalog lookup below will
 land in the report as "unknown."
 
 ## Step 3: Match BOM Entries to Prices with RAG Adapters
@@ -295,153 +253,41 @@ land in the report as "unknown."
 Matching "36x80 Aurora half-moon entry door" from a bill of materials to
 the right line in a product catalog is fuzzy by nature. Rather than ask a
 general-purpose model to "find the right price and tell me if you're sure,"
-Mellea exposes purpose-built adapters from the [IBM Granite RAG adapters
-library](https://huggingface.co/ibm-granite) for exactly this kind of check:
-`check_context_relevance`, `check_answerability`, and `find_citations`.
-(In the Python import path they're still under `intrinsic`; the
-externally-facing term is *adapter*.)
+put a calibrated gate in front of extraction.
 
-The adapters run on the HuggingFace backend, so start a second session.
-The `start_session` convenience constructor covers the common Ollama path;
-for HuggingFace plus a local backend object, drop one level and construct
-`MelleaSession` directly:
+The adapters run on the HuggingFace backend, so start a second session:
 
 ```python
 from mellea.backends.huggingface import LocalHFBackend
-from mellea.backends.model_ids import IBM_GRANITE_4_MICRO_3B
-
-m_hf = mellea.MelleaSession(
-    backend=LocalHFBackend(model_id=IBM_GRANITE_4_MICRO_3B)
-)
-```
-
-**Context relevance** asks whether a document is in the right domain for a
-question:
-
-```python
-from mellea.stdlib.components.intrinsic.rag import (
-    check_context_relevance,
-    check_answerability,
-)
+from mellea.stdlib.components.intrinsic.rag import check_answerability
 from mellea.stdlib.context import ChatContext
 
-score = check_context_relevance(
-    "What is the price of the 36x80 Aurora half-moon entry door?",
-    document=doors_doc,
-    context=ChatContext(),
-    backend=m_hf.backend,
-)
+m_hf = mellea.MelleaSession(backend=LocalHFBackend(model_id=IBM_GRANITE_4_MICRO_3B))
 ```
 
-**Answerability** asks the harder question: given this document, can the
-specific question actually be answered?
+The one line that matters is `if verdict == "answerable":`. The loop walks
+every BOM item, picks the right catalog by category, and asks the
+answerability adapter whether a price is extractable before it ever asks the
+model to produce one:
 
 ```python
-verdict = check_answerability(
-    question="What is the price of the 36x80 Aurora half-moon entry door?",
-    documents=[doors_doc],
-    context=ChatContext(),
-    backend=m_hf.backend,
-)
-# verdict is the categorical label 'answerable' or 'unanswerable'
-```
+CATALOGS = {"windows": windows_doc, "doors": doors_doc}
 
-What makes these adapters worth reaching for, as opposed to asking a
-general model "is this document relevant, 1-10," is that the outputs are
-**calibrated**. Pass the doors catalog and a doors question, you get a
-high-confidence "answerable." Pass the lumber catalog with the same doors
-question, and context relevance comes back `"partially relevant"` (a
-pricing document about construction, but not the right one) while
-answerability correctly collapses to `"unanswerable"`. Frontier model
-logits don't give you this. Nothing in a general-purpose model's training
-signal makes the raw next-token probabilities mean "calibrated confidence
-that this document answers this question." Adapters are trained to make
-them mean that.
+def price_one(entry: BOMEntry) -> tuple[float | None, float | None]:
+    catalog = CATALOGS.get(entry.category)
+    if catalog is None:
+        return None, None  # no catalog for this category → unknown
 
-### Why adapters are cheap to compose
+    verdict = check_answerability(
+        f"What is the price of {entry.item}?",
+        documents=[catalog], context=ChatContext(), backend=m_hf.backend,
+    )
+    if verdict != "answerable":
+        return None, None  # adapter isn't confident → unknown, not hallucinated
 
-A realistic pipeline wants to run multiple checks on the same
-(question, document) pair: is it relevant, is it answerable, where are the
-citations? Naively, three adapters means three full model runs, each
-re-prefilling the same long document prompt.
-
-Granite adapters ship as **[ALoRA](https://arxiv.org/abs/2504.12397)**
-adapters, not plain LoRAs. The difference is narrow but matters here: an
-ALoRA reuses the base model's prefill. The expensive pass over the document happens once against the
-base weights, and each adapter only kicks in during token generation. Three
-sequential checks on the same document share one prefill. You get
-modularity without paying 3× the compute.
-
-### The pricing loop
-
-The one line that matters is `if verdict == "answerable":`. Everything
-around it is ceremony to get that gate into place. The loop walks every
-BOM item, picks the right catalog by category, and asks the answerability
-adapter whether a price is extractable before it ever asks the model to
-produce one:
-
-```python
-class BomEntryWithPrice(pydantic.BaseModel):
-    item: str
-    quantity: int | str
-    notes: str
-    category: Literal["lumber", "windows", "doors", "other"]
-    unit_price: float | None
-    total_price: float | None
-
-class UnitPriceResponseFmt(pydantic.BaseModel):
-    unit_price: float
-
-class TotalPriceResponseFmt(pydantic.BaseModel):
-    total_price: float
-
-def get_prices(bom: BOM) -> list[BomEntryWithPrice]:
-    prices: list[BomEntryWithPrice] = []
-    for entry in bom.items:
-        # .get() returns None for categories we didn't key in (e.g. lumber),
-        # which falls through to the "unknown price" branch below.
-        catalog = {"windows": windows_doc, "doors": doors_doc}.get(entry.category)
-
-        if catalog:
-            # The gate: don't ask for a price unless the adapter is confident
-            # one can be extracted from this document.
-            verdict = check_answerability(
-                f"What is the price of {entry.item}?",
-                documents=[catalog],
-                context=ChatContext(),
-                backend=m_hf.backend,
-            )
-            if verdict == "answerable":
-                unit = m.instruct(
-                    f"Find the `unit_price` of {entry.item} in the catalog.",
-                    grounding_context={"catalog": catalog.text},
-                    format=UnitPriceResponseFmt,
-                )
-                unit_price = UnitPriceResponseFmt.model_validate_json(unit.value).unit_price
-
-                total = m.instruct(
-                    f"Find the `total_price` given the `unit_price` and `quantity` for {entry.item}",
-                    grounding_context={
-                        "unit_price": str(unit_price),
-                        "quantity": str(entry.quantity),
-                    },
-                    format=TotalPriceResponseFmt,
-                )
-                total_price = TotalPriceResponseFmt.model_validate_json(total.value).total_price
-
-                prices.append(BomEntryWithPrice(
-                    item=entry.item, quantity=entry.quantity, notes=entry.notes,
-                    category=entry.category, unit_price=unit_price, total_price=total_price,
-                ))
-                continue  # happy path done — skip the fallback append
-
-        # Either no catalog for this category or the adapter said "unanswerable":
-        # record the item with unit_price=None so the report surfaces it as unknown.
-        prices.append(BomEntryWithPrice(
-            item=entry.item, quantity=entry.quantity, notes=entry.notes,
-            category=entry.category, unit_price=None, total_price=None,
-        ))
-    return prices
+    unit = extract_unit_price(entry, catalog)          # m.instruct, format=...
+    total = extract_total(unit, entry.quantity)        # m.instruct, format=...
+    return unit, total
 ```
 
 `verdict == "answerable"` is a gate: items the adapter can't confidently
@@ -452,27 +298,21 @@ calibrated adapter has already confirmed the number is there. The hard
 problem (*is this the right document at all?*) was solved by a
 specialized adapter rather than by a general prompt.
 
-For extra belt-and-suspenders, `find_citations` will highlight the exact
-span of the source document that produced each answer, so spot-checks
-become a substring lookup rather than a re-read. It works on any response
-against any document — here's the shape against a single item:
+What makes these adapters worth reaching for, as opposed to asking a
+general model "is this document relevant, 1-10," is that the outputs are
+**calibrated**. Pass the doors catalog and a doors question, you get a
+high-confidence `"answerable"`. Pass the lumber catalog with the same doors
+question, and answerability correctly collapses to `"unanswerable"`.
+Frontier model logits don't give you this. Nothing in a general-purpose
+model's training signal makes the raw next-token probabilities mean
+"calibrated confidence that this document answers this question." Adapters
+are trained to make them mean that.
 
-```python
-from mellea.stdlib.components.intrinsic.rag import find_citations
-
-total = m.instruct(
-    "Find the `total_price` of the 36x80 Aurora half-moon entry door.",
-    grounding_context={"catalog": doors_doc.text},
-    format=TotalPriceResponseFmt,
-)
-
-citations = find_citations(
-    response=total.value,
-    documents=[doors_doc],
-    context=ChatContext(),
-    backend=m_hf.backend,
-)
-```
+The same adapter family also supports context relevance and citation
+finding. Granite adapters ship as **[ALoRA](https://arxiv.org/abs/2504.12397)**
+adapters, so multiple checks on the same long document can reuse the base
+model's prefill instead of paying for the full document pass each time. You
+get modularity without paying 3× the compute.
 
 ## Step 4: Generate the Report
 
@@ -486,38 +326,35 @@ The same `m` name now points at the larger model for the remainder of the
 pipeline:
 
 ```python
-import json
 from mellea.backends.model_ids import OPENAI_GPT_OSS_20B
 from mellea.backends.model_options import ModelOption
 from mellea.stdlib.tools import local_code_interpreter
 from mellea.backends.tools import MelleaTool
 
 m = mellea.start_session(backend_name="ollama", model_id=OPENAI_GPT_OSS_20B)
+```
 
-report_grounding_context = {
-    x.item: json.dumps({
-        "total_price": x.total_price if x.total_price is not None else "unknown",
-        "category": x.category,
-    })
-    for x in prices
-}
+The chart step hands the model a tool and lets it drive:
 
-pie_chart_result = m.instruct(
-    "Use the code interpreter tool to create a pie chart of known cost "
-    "breakdowns by category. Put the pie chart in /tmp/chart.png",
-    grounding_context=report_grounding_context,
+```python
+chart = m.instruct(
+    "Use the code interpreter to create a pie chart of cost breakdowns "
+    "by category. Save it to /tmp/chart.png.",
+    grounding_context=report_ctx,  # {item: {total_price, category}} for each priced row
     tool_calls=True,
     model_options={ModelOption.TOOLS: [MelleaTool.from_callable(local_code_interpreter)]},
 )
-pie_chart_result.tool_calls["local_code_interpreter"].call_func()
+chart.tool_calls["local_code_interpreter"].call_func()
+```
 
+Then a plain instruct writes the HTML report around that image:
+
+```python
 report = m.instruct(
     "Write an HTML report with a top-line cost breakdown by category and a "
-    "line-item material list with prices. At the top include the /tmp/chart.png image.",
-    grounding_context=report_grounding_context,
+    "line-item material list with prices. At the top include /tmp/chart.png.",
+    grounding_context=report_ctx,
 )
-with open("/tmp/report.html", "w") as f:
-    f.write(report.value)
 ```
 
 Swapping sessions mid-pipeline is one line. Each step runs against the
@@ -530,6 +367,22 @@ dict, not a vector store. When the context is small and structured and
 known at call time, passing it directly is simpler and more predictable
 than dragging in retrieval.
 
+Here's what the pipeline actually produces. The chart and top-line table:
+
+![Construction material cost report with pie chart and category totals](/images/small-models-rock/chart1.png)
+
+And the line-item list, where every row is either a price extracted from a
+catalog or an explicit `unknown`:
+
+![Line-item material list with per-row prices or unknown](/images/small-models-rock/chart2.png)
+
+The grand total ($7,885.04) is the sum of *known* items only. Lumber items
+the answerability adapter couldn't confidently price stay as `unknown`
+rather than as fabricated numbers, and the lumber row in the top-line
+table is annotated *excluding unknown items* so the gap is visible at a
+glance. That's the property worth checking — not that every row gets a
+price, but that unsupported rows fail loudly.
+
 ## Small Models, Frontier-Level Output
 
 Step back from the construction example. The general shape of the trade:
@@ -537,12 +390,12 @@ Step back from the construction example. The general shape of the trade:
 <img src="/images/small-models-rock/harnessed.png" alt="A small model, harnessed" style="max-width: 60%;" />
 
 A task that one-shot required a frontier model and a dollar per run now
-runs on a 3B open-weight model on a laptop. Pricing extraction on Granite 4
-Micro 3B via HuggingFace, chart and report generation on GPT-OSS 20B via
-Ollama, no API keys, no egress, no per-token billing. Items the pipeline
-can't confidently price show up as `unknown` in the output rather than as
-hallucinated numbers, so the report is auditable instead of something a
-human has to re-check line by line.
+runs as a local pipeline with smaller models doing the narrow parts. Pricing
+extraction runs on Granite 4 Micro 3B via HuggingFace; chart and report
+generation run on GPT-OSS 20B via Ollama. No API keys, no egress, no
+per-token billing. Items the pipeline can't confidently price show up as
+`unknown` in the output rather than as hallucinated numbers, so the report
+is auditable instead of something a human has to re-check line by line.
 
 The construction case isn't a one-off. The same three-pattern approach
 generalizes. In internal evaluations on agent benchmarks the Mellea team
@@ -553,10 +406,11 @@ the accuracy of a baseline several tiers up. Those points of task
 completion are the ones you usually can't buy without going up a model
 tier. The harness buys them instead.
 
-The practical upshot: "small model or frontier model" is mostly a question
-about whether the harness around the model is doing its share, not about
-raw capability. If you're paying frontier-model prices for a task
-that decomposes cleanly, there's a good chance you're paying for
+The win is not that one tiny model does everything. The win is that the
+harness lets narrow steps run on tiny local models, reserves larger local
+models for the few steps that need them, and keeps control flow, validation,
+and failure handling in code. If you're paying frontier-model prices for a
+task that decomposes cleanly, there's a good chance you're paying for
 engineering you haven't done yet.
 
 ## Trade-offs
@@ -580,9 +434,9 @@ backtests. It pays back once the task is recurring, privacy matters, or
 cost compounds at scale.
 
 Not everything decomposes. Tasks that are genuinely holistic, like
-free-form creative writing or long-form reasoning chains that can't be cut
-at clean seams, still favor a big model. Know which kind of task you have
-before you invest.
+free-form creative writing or long-form reasoning chains that cannot be
+separated into clean intermediate states, still favor a big model. Know
+which kind of task you have before you invest.
 
 ## Try It
 
@@ -591,6 +445,6 @@ report-generation pipelines and paying frontier-model prices for it, the
 pieces used above are all part of Mellea's standard library. The full
 construction tutorial notebook is in the Mellea tutorials repo.
 
+- [Construction tutorial notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
 - [Mellea on GitHub](https://github.com/generative-computing/mellea)
 - [Granite RAG adapters on Hugging Face](https://huggingface.co/ibm-granite)
-- [Construction tutorial notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
