@@ -454,12 +454,17 @@ specialized adapter rather than by a general prompt.
 
 For extra belt-and-suspenders, `find_citations` will highlight the exact
 span of the source document that produced each answer, so spot-checks
-become a substring lookup rather than a re-read. Drop this inside the
-`get_prices` loop right after each `total = m.instruct(...)` — `total`
-is the `ModelOutputThunk` bound on L420, so it only exists in that scope:
+become a substring lookup rather than a re-read. It works on any response
+against any document — here's the shape against a single item:
 
 ```python
 from mellea.stdlib.components.intrinsic.rag import find_citations
+
+total = m.instruct(
+    "Find the `total_price` of the 36x80 Aurora half-moon entry door.",
+    grounding_context={"catalog": doors_doc.text},
+    format=TotalPriceResponseFmt,
+)
 
 citations = find_citations(
     response=total.value,
