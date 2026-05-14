@@ -63,7 +63,7 @@ Three things fall out of that approach:
 ## The Three Patterns
 
 Mellea turns a task that needs a frontier model into one a small model can
-handle through three moves:
+handle through three patterns:
 
 ![Decompose, externalize control flow, and modularize capabilities](/images/small-models-rock/three-steps.png)
 
@@ -78,21 +78,21 @@ handle through three moves:
    instead of rebuilding them every time.
 
 None of these is new. They are the ordinary software-engineering moves
-you'd make for any non-trivial system. What's new is applying them to the
+you would make for any non-trivial system. What's new is applying them to the
 part of your program that happens to be written in English.
 
 The argument in [*On the Foolishness of "Natural Language
 Programming"*](https://www.cs.utexas.edu/~EWD/transcriptions/EWD06xx/EWD667.html)
-from 1978 applies directly:
+from 1978 applies directly. Dijkstra's line:
 
-> English is designed for communication between humans, not for
-> specifying processes executed by machines. The fact that a modern
-> model can *interpret* English well enough to try doesn't mean English
-> is a good language to write your program in.
+> The "naturalness" with which we use our native tongues boils down to
+> the ease with which we can use them for making statements the nonsense
+> of which is not obvious.
 
-Drawing boundaries, stating contracts, decomposing work: that's where
-the engineering has always lived. The syntax of the target language
-was the trivial part.
+A modern model interpreting English well enough to *try* doesn't change
+that. Drawing boundaries, stating contracts, decomposing work: that's
+where the engineering has always lived. The syntax of the target
+language was the trivial part.
 
 ## An Example Worth Walking Through
 
@@ -105,31 +105,31 @@ spread across several tables) and a handful of supplier catalogs (PDF,
 DOCX, XLSX). The output is a priced HTML report with a pie chart breaking
 spend down by category.
 
-Ask a frontier model to do this in one shot and you can make it work. A
-top-tier reasoning model with extended thinking gets most of the line
-items right, cites the catalog it pulled the price from, and does it all
-for about a dollar per run. Here's what one-shot prompting looks like
+Ask a frontier model to do this in one shot and you can mostly make it
+work. A top-tier reasoning model with extended thinking gets most of the
+line items right, cites the catalog it pulled the price from, and does
+it all for about a dollar per run. Here's what one-shot prompting looks like
 across the size spectrum:
 
 | Model | Result |
 | --- | --- |
 | Small open-weight (<3B) | Doesn't understand the task. Returns a generic "cost breakdown" with no prices. |
-| Open-weight reasoning (~20B) | Finds categories and subtotals. No pie chart. Numbers often wrong. |
-| Gemini Fast | Mostly reasonable. No chart. Some prices off. |
-| Frontier reasoning (GPT-5) | Gets most items right. Cites sources. No chart on first shot. ~$1/run. |
+| Open-weight reasoning (gpt-oss-20b, one-shot) | Finds categories and subtotals. No pie chart. Numbers often wrong. |
+| Gemini Flash | Mostly reasonable. No chart. Some prices off. |
+| Frontier reasoning (GPT-5) | Gets most items right. Cites sources. No chart on first shot. On the order of a dollar per run. |
 
-A dollar per run sounds cheap until you write down what the firm actually
-wants to do with it. Fifteen hundred projects a year, twenty years of
-history, a backlog of hypothetical backtests: *what if we'd switched lumber
-suppliers in 2012? What happens to margins if this supply chain constraint
-materializes?* One backtest is a Monte Carlo simulation over tens of
-thousands of projects. At a dollar a run, that's the budget for a small
-team.
+That sounds cheap until you write down what the firm actually wants to
+do with it. Fifteen hundred projects a year, twenty years of history, a
+backlog of hypothetical backtests: *what if we'd switched lumber
+suppliers in 2012? What happens to margins if this supply chain
+constraint materializes?* One backtest is a Monte Carlo simulation over
+tens of thousands of projects. At frontier-API prices, that's the
+budget for a small team.
 
 Same task, as a local Mellea pipeline. Local models handle parsing,
 validation, pricing, and chart/report generation instead of routing the
-whole job through a frontier API. About a hundred lines of code. No API
-keys, no egress, no per-token billing. Here's how.
+whole job through a frontier API. A few hundred lines of pipeline code,
+no API keys, no egress, no per-token billing. Here's how.
 
 > **Note:** The snippets below are the load-bearing pieces of the pipeline, trimmed
 > for reading. The [full runnable notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
@@ -224,10 +224,15 @@ only has to do the reformatting.
 ### Parallelize across tables
 
 Construction documents often carry many tables, and each table is
-independent of the others. In the full notebook, this step fans out with
-`ainstruct`: one coroutine per material-list table, then a gather that
-merges the resulting `BOM` objects. Wall-clock scales with the slowest
-table, not the sum. The loop shape stays in Python.
+independent of the others. The full notebook fans out with `ainstruct`:
+
+```python
+boms = await asyncio.gather(*[reformat(t) for t in material_tables])
+```
+
+One coroutine per material-list table, gather merges the resulting
+`BOM` objects. Wall-clock scales with the slowest table, not the sum.
+The loop shape stays in Python.
 
 ## Step 2: Load the Product Catalogs
 
@@ -265,10 +270,10 @@ from mellea.stdlib.context import ChatContext
 m_hf = mellea.MelleaSession(backend=LocalHFBackend(model_id=IBM_GRANITE_4_MICRO_3B))
 ```
 
-The one line that matters is `if verdict == "answerable":`. The loop walks
-every BOM item, picks the right catalog by category, and asks the
-answerability adapter whether a price is extractable before it ever asks the
-model to produce one:
+The line that matters is the answerability gate (`if verdict != "answerable":`)
+sitting in front of extraction. The loop walks every BOM item, picks the
+right catalog by category, and asks the answerability adapter whether a
+price is extractable before it ever asks the model to produce one:
 
 ```python
 CATALOGS = {"windows": windows_doc, "doors": doors_doc}
@@ -310,9 +315,12 @@ are trained to make them mean that.
 
 The same adapter family also supports context relevance and citation
 finding. Granite adapters ship as **[ALoRA](https://arxiv.org/abs/2504.12397)**
-adapters, so multiple checks on the same long document can reuse the base
-model's prefill instead of paying for the full document pass each time. You
-get modularity without paying 3× the compute.
+adapters — *activated* low-rank adapters that switch on only for the
+adapter's own forward pass, leaving the base model's KV cache from the
+document prefill intact. Running answerability, context relevance, and
+citation finding over the same long document reuses that one prefill
+instead of paying for it three times. You get modularity without paying
+3× the compute.
 
 ## Step 4: Generate the Report
 
@@ -361,9 +369,10 @@ Swapping sessions mid-pipeline is one line. Each step runs against the
 model that suits it: tiny and cheap where the task is narrow, bigger only
 where the task demands it.
 
-The chart is drawn by actual Python code executing on actual data, not by a
-diffusion model hallucinating a plot. The grounding context is a plain
-dict, not a vector store. When the context is small and structured and
+The chart is drawn by actual Python code executing on actual data, not
+by a model emitting numbers and hoping they line up with the totals
+elsewhere in the report. The grounding context is a plain dict, not a
+vector store. When the context is small and structured and
 known at call time, passing it directly is simpler and more predictable
 than dragging in retrieval.
 
@@ -383,7 +392,7 @@ table is annotated *excluding unknown items* so the gap is visible at a
 glance. That's the property worth checking — not that every row gets a
 price, but that unsupported rows fail loudly.
 
-## Small Models, Frontier-Level Output
+## Small Models, Production-Ready Output
 
 Step back from the construction example. The general shape of the trade:
 
@@ -398,13 +407,13 @@ per-token billing. Items the pipeline can't confidently price show up as
 is auditable instead of something a human has to re-check line by line.
 
 The construction case isn't a one-off. The same three-pattern approach
-generalizes. In internal evaluations on agent benchmarks the Mellea team
-has run (a DB2 database agent and a compliance agent), rewriting large
-prompt-based systems as Mellea programs produces meaningful task-completion
-gains on large models and lets much smaller open-weight models approach
-the accuracy of a baseline several tiers up. Those points of task
-completion are the ones you usually can't buy without going up a model
-tier. The harness buys them instead.
+generalizes. The Mellea team has been porting prompt-heavy agents (a DB2
+database agent and a compliance agent) to the same decompose / externalize
+/ modularize shape, and the practical effect is what you'd predict from
+the construction pipeline: the steps the small model is now asked to do
+are narrow enough that it can do them, and the steps that still need a
+larger model are isolated to where they actually matter. The harness is
+what buys you that separation.
 
 The win is not that one tiny model does everything. The win is that the
 harness lets narrow steps run on tiny local models, reserves larger local
@@ -415,9 +424,11 @@ engineering you haven't done yet.
 
 ## Trade-offs
 
-Latency per run is higher than a single API call. Async execution hides
-most of the fan-out, but a pipeline will always be slower per-run than one
-prompt. The win is in cost, privacy, and auditability, not in tail latency.
+Wall-clock per run is higher than a single API call. Each individual
+step is usually *faster* — smaller model, no network — but a pipeline
+with several serial steps adds up. Async execution hides most of the
+fan-out within a step, not across them. The win is in cost, privacy,
+and auditability, not in tail latency.
 
 Rate limits disappear. A frontier API can rate-limit you mid-backtest;
 local inference can't. When a pipeline fails at 3am, debugging a
