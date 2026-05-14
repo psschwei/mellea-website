@@ -270,8 +270,10 @@ from mellea.stdlib.context import ChatContext
 m_hf = mellea.MelleaSession(backend=LocalHFBackend(model_id=IBM_GRANITE_4_MICRO_3B))
 ```
 
-The line that matters is the answerability gate (`if verdict != "answerable":`)
-sitting in front of extraction. The loop walks every BOM item, picks the
+`check_answerability` is the RAG adapter we'll use as our gate: given a
+question and a document, it returns whether the document actually contains
+enough information to answer. The line that matters is the answerability
+gate (`if verdict != "answerable":`) sitting in front of extraction. The loop walks every BOM item, picks the
 right catalog by category, and asks the answerability adapter whether a
 price is extractable before it ever asks the model to produce one:
 
@@ -458,4 +460,4 @@ construction tutorial notebook is in the Mellea tutorials repo.
 
 - [Construction tutorial notebook](https://github.com/generative-computing/mellea-tutorials/blob/main/notebooks/atai_2026/tutorial.ipynb)
 - [Mellea on GitHub](https://github.com/generative-computing/mellea)
-- [Granite RAG adapters on Hugging Face](https://huggingface.co/ibm-granite)
+- [Granite RAG adapters on Hugging Face](https://huggingface.co/ibm-granite/granitelib-rag-r1.0)
