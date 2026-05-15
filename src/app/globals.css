@@ -31,6 +31,7 @@
 
   --header-bg: rgba(10, 10, 10, 0.92);
   --code-bg: #0d1117;
+  --code-header-bg: #161b22;
   --code-color: #e6edf3;
   --hero-glow: rgba(69, 137, 255, 0.12);
 
@@ -62,6 +63,7 @@
 
     --header-bg: rgba(255, 255, 255, 0.92);
     --code-bg: #f4f4f4;
+    --code-header-bg: #e8e8e8;
     --code-color: #161616;
     --hero-glow: rgba(15, 98, 254, 0.06);
   }
@@ -1047,7 +1049,7 @@ a {
 .showcase-code-wrap {
   display: flex;
   flex-direction: column;
-  background: #0d1117;
+  background: var(--code-bg);
   min-height: 0;
 }
 
@@ -1056,8 +1058,8 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 1rem;
-  border-bottom: 1px solid #30363d;
-  background: #161b22;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-header-bg);
   flex-shrink: 0;
 }
 
@@ -1067,7 +1069,7 @@ a {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #8b949e;
+  color: var(--text-secondary);
 }
 
 .showcase-code-copy {
@@ -1075,14 +1077,14 @@ a {
   border: none;
   cursor: pointer;
   padding: 0;
-  color: #8b949e;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   transition: color 0.15s;
 }
 
 .showcase-code-copy:hover {
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .showcase-code-copy svg {
