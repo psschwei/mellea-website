@@ -198,20 +198,14 @@ it goes into a requirement with an explicit validator:
 ```python
 from mellea.stdlib.requirements import req, simple_validate
 
-def _quantity_ok(q) -> bool:
-    return str(q).isdigit() or str(q).lower() == "allowance"
+def _quantity_is_valid(out: str) -> bool:
+    bom = BOM.model_validate_json(out)
+    return all(str(e.quantity).isdigit() or str(e.quantity).lower() == "allowance" for e in bom.items)
 
 m.instruct(
     "Reformat this table to have four columns: item, quantity, category, and notes.",
     grounding_context={"table": table.to_markdown()},
-    requirements=[
-        req(
-            "Quantity must be an integer or 'allowance'",
-            validation_fn=simple_validate(
-                lambda out: all(_quantity_ok(e.quantity) for e in BOM.model_validate_json(out).items)
-            ),
-        ),
-    ],
+    requirements=[req("Quantity must be an integer or 'allowance'", validation_fn=simple_validate(_quantity_is_valid))],
     format=BOM,
 )
 ```
@@ -245,8 +239,8 @@ from mellea.stdlib.components.docs import Document
 def load(path: str) -> Document:
     return Document(text=RichDocument.from_document_file(path).to_markdown())
 
-doors_doc = load("construction_docs/product_catalogs/door_product_catalog.pdf")
-windows_doc = load("construction_docs/product_catalogs/north_ridge_windows.docx")
+doors_doc = load("door_catalog.pdf")
+windows_doc = load("windows_catalog.docx")
 ```
 
 Each becomes a plain `Document`, the input format Mellea's RAG adapters
