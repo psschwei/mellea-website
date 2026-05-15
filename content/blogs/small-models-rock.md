@@ -1,6 +1,6 @@
 ---
 title: "Making Small Models Rock with Mellea"
-date: "2026-06-05"
+date: "2026-05-20"
 author: "Paul Schweigert, Nathan Fulton"
 excerpt: "Small open-weight models can handle production-shaped work when the harness decomposes the task, validates outputs, and routes each step to the right local model."
 tags: ["granite", "rag", "adapters", "small-models", "docling", "local-llm"]
